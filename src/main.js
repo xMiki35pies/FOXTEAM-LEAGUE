@@ -6,7 +6,8 @@ const app = document.querySelector('#app')
 const defaultData = {
   leagueName: 'FOXTEAM LEAGUE',
   teams: [],
-  matches: []
+  matches: [],
+  schedule: []
 }
 
 let data
@@ -14,8 +15,12 @@ let data
 try {
   data = JSON.parse(localStorage.getItem('foxteam-data')) || defaultData
 } catch {
-  data = defaultData
+  data = { ...defaultData }
 }
+
+data.teams ||= []
+data.matches ||= []
+data.schedule ||= []
 
 function save() {
   localStorage.setItem('foxteam-data', JSON.stringify(data))
@@ -85,6 +90,56 @@ function getTable() {
     b.difference - a.difference ||
     b.scored - a.scored
   )
+}
+
+function generateSchedule() {
+  const teams = [...data.teams]
+
+  // Losowanie kolejności drużyn
+  for (let i = teams.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[teams[i], teams[j]] = [teams[j], teams[i]]
+  }
+
+  // Przy nieparzystej liczbie drużyn jedna pauzuje
+  if (teams.length % 2 !== 0) {
+    teams.push(null)
+  }
+
+  // Pary, które już rozegrały mecz
+  const completed = new Set(
+    data.matches.map(match =>
+      [match.home, match.away].sort().join(':')
+    )
+  )
+
+  const schedule = []
+  const count = teams.length
+
+  for (let round = 0; round < count - 1; round++) {
+    for (let i = 0; i < count / 2; i++) {
+      const home = teams[i]
+      const away = teams[count - 1 - i]
+
+      if (!home || !away) continue
+
+      const key = [home.id, away.id].sort().join(':')
+
+      if (completed.has(key)) continue
+
+      schedule.push({
+        id: crypto.randomUUID(),
+        round: round + 1,
+        home: home.id,
+        away: away.id
+      })
+    }
+
+    // Rotacja drużyn przed następną kolejką
+    teams.splice(1, 0, teams.pop())
+  }
+
+  return schedule
 }
 
 function dashboard() {
@@ -220,6 +275,35 @@ function matchesPage() {
 
           <button class="action-btn" type="submit">+ ZAPISZ WYNIK</button>
         </form>
+      `}
+    </section>
+
+    <section class="panel main-panel">
+      <div class="panel-heading">
+        <h3>TERMINARZ LIGI</h3>
+        ${button('🎲 LOSUJ TERMINARZ', 'draw-schedule')}
+      </div>
+
+      ${data.schedule.length ? `
+        ${[...new Set(data.schedule.map(match => match.round))]
+          .sort((a, b) => a - b)
+          .map(round => `
+            <div class="section-heading">
+              <h2>KOLEJKA ${round}</h2>
+            </div>
+
+            ${data.schedule.filter(match => match.round === round).map(match => `
+              <div class="match-row">
+                <span>${safe(data.teams.find(t => t.id === match.home)?.name || '?')}</span>
+                <strong>VS</strong>
+                <span>${safe(data.teams.find(t => t.id === match.away)?.name || '?')}</span>
+              </div>
+            `).join('')}
+          `).join('')}
+      ` : `
+        <p class="empty-message">
+          Nie ma jeszcze terminarza. Kliknij przycisk powyżej, aby go wylosować.
+        </p>
       `}
     </section>
 
@@ -395,11 +479,38 @@ app.addEventListener('click', event => {
 
   const [action, id] = actionButton.dataset.action.split(':')
 
+  if (action === 'draw-schedule') {
+    if (data.teams.length < 2) {
+      alert('Dodaj minimum dwie drużyny!')
+      return
+    }
+
+    if (data.schedule.length &&
+        !confirm('Wylosować terminarz ponownie?')) {
+      return
+    }
+
+    data.schedule = generateSchedule()
+
+    if (!data.schedule.length) {
+      alert('Nie ma dostępnych meczów do wylosowania!')
+    } else {
+      alert('Terminarz został wylosowany!')
+    }
+
+    save()
+    render()
+    return
+  }
+
   if (action === 'delete-team') {
     if (!confirm('Usunąć drużynę? Jej mecze również zostaną usunięte.')) return
 
     data.teams = data.teams.filter(team => team.id !== id)
     data.matches = data.matches.filter(match =>
+      match.home !== id && match.away !== id
+    )
+    data.schedule = data.schedule.filter(match =>
       match.home !== id && match.away !== id
     )
   }
@@ -413,6 +524,7 @@ app.addEventListener('click', event => {
     if (!confirm('Na pewno usunąć WSZYSTKIE drużyny i wyniki?')) return
     data.teams = []
     data.matches = []
+    data.schedule = []
   }
 
   save()
@@ -436,6 +548,9 @@ app.addEventListener('submit', event => {
       id: crypto.randomUUID(),
       name
     })
+
+    // Nowa drużyna wymaga ponownego losowania terminarza
+    data.schedule = []
   }
 
   if (form.id === 'match-form') {
@@ -453,6 +568,16 @@ app.addEventListener('submit', event => {
       return
     }
 
+    const pairAlreadyPlayed = data.matches.some(match =>
+      [match.home, match.away].sort().join(':') ===
+      [values.home, values.away].sort().join(':')
+    )
+
+    if (pairAlreadyPlayed) {
+      alert('Te drużyny już rozegrały ze sobą mecz!')
+      return
+    }
+
     data.matches.push({
       id: crypto.randomUUID(),
       home: values.home,
@@ -461,6 +586,14 @@ app.addEventListener('submit', event => {
       awayScore,
       date: values.date
     })
+
+    // Usuń rozegrany mecz z terminarza
+    data.schedule = data.schedule.filter(match =>
+      !(
+        [match.home, match.away].sort().join(':') ===
+        [values.home, values.away].sort().join(':')
+      )
+    )
   }
 
   if (form.id === 'settings-form') {
@@ -472,4 +605,3 @@ app.addEventListener('submit', event => {
 })
 
 render()
-
